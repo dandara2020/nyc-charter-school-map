@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NYC Charter Schools Map (2025-26)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --ink:#1f2328; --muted:#59636e; --line:#d1d9e0; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); }
+  #app { display:flex; height:100%; }
+  #panel { width:330px; flex-shrink:0; padding:16px; overflow-y:auto; border-right:1px solid var(--line); background:#fff; }
+  #map { flex:1; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 14px; }
+  .big { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:16px 0 6px; }
+  input[type=search] { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:14px; }
+  .row { display:flex; align-items:center; gap:8px; font-size:14px; padding:3px 0; cursor:pointer; }
+  .dot { width:12px; height:12px; border-radius:50%; display:inline-block; flex-shrink:0; }
+  .ring { width:12px; height:12px; border-radius:50%; display:inline-block; border:2px dashed #1f2328; background:#fff; }
+  .n { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
+  details { margin-top:16px; font-size:13px; }
+  summary { cursor:pointer; font-weight:600; }
+  #unmatched li { margin:4px 0; }
+  #unmatched .why { color:var(--muted); font-size:12px; }
+  .foot { margin-top:16px; font-size:12px; color:var(--muted); line-height:1.5; }
+  .foot a { color:inherit; }
+  .popup h3 { margin:0 0 4px; font-size:14px; }
+  .popup p { margin:2px 0; font-size:13px; }
+  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:10px; background:#eef1f4; margin-top:4px; }
+  .tag.review { background:#fff4d6; }
+  #err { color:#b42318; font-size:14px; }
+  @media (max-width:700px) { #app { flex-direction:column; } #panel { width:100%; max-height:45%; border-right:none; border-bottom:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <h1>NYC Charter Schools, 2025–26</h1>
+    <p class="sub">Every NYC school in the official NYSED charter school directory, placed using state location data.</p>
+
+    <div><span class="big" id="shown">…</span> <span id="shownLabel">loading</span></div>
+    <div id="err"></div>
+
+    <h2>Search</h2>
+    <input id="q" type="search" placeholder="School name, network or ZIP" />
+
+    <h2>Borough</h2>
+    <div id="boros"></div>
+
+    <h2>Location confidence</h2>
+    <div class="row" style="cursor:default"><span class="dot" style="background:#555"></span> Matched by state school ID (SED code)</div>
+    <div class="row" style="cursor:default"><span class="ring"></span> Matched by exact name; review</div>
+
+    <details id="unmatchedBox">
+      <summary>Not on map (<span id="unmatchedCount">0</span>)</summary>
+      <p class="why">These directory schools had no reliable location match, so they're listed here instead of placed at a guessed location.</p>
+      <ul id="unmatched"></ul>
+    </details>
+
+    <p class="foot" id="foot">
+      <strong>Schools:</strong> NYSED 2025–2026 NYS Charter School Directory.<br>
+      <strong>Locations:</strong> NYS ITS / NYSED Charter K-12 GIS layer, matched by SED code; NCES EDGE 2024–25 for exact-name fallbacks.<br>
+      Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. See README for method and limitations.
+    </p>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const BOROUGHS = {
+  "Manhattan":     "#2563eb",
+  "Bronx":         "#dc2626",
+  "Brooklyn":      "#16a34a",
+  "Queens":        "#9333ea",
+  "Staten Island": "#ea580c",
+};
+const METHOD_LABEL = {
+  sed_code:   ["Matched by SED code (state GIS layer)", ""],
+  name_state: ["Matched by exact name (state GIS layer); review", "review"],
+  name_nces:  ["Matched by exact name (NCES 2024–25); review", "review"],
+};
+
+const map = L.map("map").setView([40.71, -73.95], 11);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "© OpenStreetMap contributors",
+}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const active = new Set(Object.keys(BOROUGHS));
+let schools = [], totalInDirectory = 0;
+
+function popup(p) {
+  const [label, cls] = METHOD_LABEL[p.match_method] || [p.match_method, ""];
+  const addr = [p.address, p.city, p.zip].filter(Boolean).join(", ");
+  return `<div class="popup">
+    <h3>${esc(p.name)}</h3>
+    ${addr ? `<p>${esc(addr)}</p>` : ""}
+    <p>${esc(p.borough)} · ${esc(p.district)}</p>
+    <p>Authorizer: ${esc(p.authorizer)} · Opened ${esc(p.year_opened)}</p>
+    <p style="color:#59636e">SED code ${esc(p.sed_code)}</p>
+    <span class="tag ${cls}">${esc(label)}</span>
+  </div>`;
+}
+
+function render() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  layer.clearLayers();
+  let n = 0;
+  for (const s of schools) {
+    const p = s.properties;
+    if (!active.has(p.borough)) continue;
+    if (q && !`${p.name} ${p.address} ${p.zip} ${p.district}`.toLowerCase().includes(q)) continue;
+    s.marker.addTo(layer); n++;
+  }
+  document.getElementById("shown").textContent = n;
+  document.getElementById("shownLabel").textContent =
+    `of ${schools.length} mapped schools shown (${totalInDirectory} in directory)`;
+}
+
+async function getJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function load() {
+  let geo, unmatched = [];
+  try {
+    geo = await getJson("data/nyc_charter_schools.geojson");
+  } catch (e) {
+    document.getElementById("shown").textContent = "!";
+    document.getElementById("shownLabel").textContent = "";
+    document.getElementById("err").textContent =
+      "Map data not found. Run scripts/build_data.py first, and open the page through a web server (see README), not by double-clicking.";
+    return;
+  }
+  try { unmatched = await getJson("data/unmatched_schools.json"); } catch (e) { /* optional */ }
+
+  totalInDirectory = geo.metadata?.nyc_schools_in_directory ?? geo.features.length;
+  schools = geo.features.map(f => {
+    const p = f.properties, [lng, lat] = f.geometry.coordinates;
+    const review = p.match_method !== "sed_code";
+    f.marker = L.circleMarker([lat, lng], review
+      ? { radius: 7, weight: 2.5, color: BOROUGHS[p.borough] || "#555", fillColor: "#fff", fillOpacity: 1, dashArray: "3 2" }
+      : { radius: 7, weight: 1.5, color: "#fff", fillColor: BOROUGHS[p.borough] || "#555", fillOpacity: 0.9 }
+    ).bindPopup(popup(p));
+    return f;
+  });
+
+  // Borough filters with counts
+  const box = document.getElementById("boros");
+  for (const [b, color] of Object.entries(BOROUGHS)) {
+    const count = schools.filter(s => s.properties.borough === b).length;
+    const row = document.createElement("label");
+    row.className = "row";
+    row.innerHTML = `<input type="checkbox" checked><span class="dot" style="background:${color}"></span>${b}<span class="n">${count}</span>`;
+    row.querySelector("input").onchange = e => { e.target.checked ? active.add(b) : active.delete(b); render(); };
+    box.appendChild(row);
+  }
+
+  // Unmatched list
+  document.getElementById("unmatchedCount").textContent = unmatched.length;
+  document.getElementById("unmatched").innerHTML = unmatched.map(u =>
+    `<li>${esc(u.name)} <span class="why">(${esc(u.borough)}, opened ${esc(u.year_opened)})</span></li>`).join("");
+  if (!unmatched.length) document.getElementById("unmatchedBox").style.display = "none";
+
+  if (geo.metadata?.generated)
+    document.getElementById("foot").insertAdjacentHTML("beforeend", `<br>Data built ${esc(geo.metadata.generated)}.`);
+
+  render();
+  if (schools.length) map.fitBounds(L.latLngBounds(schools.map(s => s.marker.getLatLng())), { padding: [20, 20] });
+}
+
+document.getElementById("q").addEventListener("input", render);
+load();
+</script>
+</body>
+</html>

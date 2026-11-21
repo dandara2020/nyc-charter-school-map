@@ -1,0 +1,37 @@
+[
+ {
+  "name": "Collegiate Academy for Mathematics and Personal Awareness Charter School",
+  "sed_code": "331900861065",
+  "borough": "Brooklyn",
+  "year_opened": "2016",
+  "reason": "No SED-code or exact-name match in location sources"
+ },
+ {
+  "name": "Explore Enrich Charter School",
+  "sed_code": "331700861047",
+  "borough": "Brooklyn",
+  "year_opened": "2025",
+  "reason": "matched by sed_code but point is outside NYC (42.64716931560379, -73.74988113398803)"
+ },
+ {
+  "name": "Lamad Averne Academy Charter School",
+  "sed_code": "320700861202",
+  "borough": "Bronx",
+  "year_opened": "2025",
+  "reason": "No SED-code or exact-name match in location sources"
+ },
+ {
+  "name": "Zeta Charter School - Queens 2",
+  "sed_code": "342400861208",
+  "borough": "Queens",
+  "year_opened": "2025",
+  "reason": "No SED-code or exact-name match in location sources"
+ },
+ {
+  "name": "Zeta Charter School - Queens Jamaica",
+  "sed_code": "342400861209",
+  "borough": "Queens",
+  "year_opened": "2025",
+  "reason": "No SED-code or exact-name match in location sources"
+ }
+]
